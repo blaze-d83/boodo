@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -10,11 +12,68 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	appName      = "boodo"
+	dataFileName = "tasks.json"
+)
+
+// Styles
 var (
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 	doneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
 )
+
+func getDataPath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	appDir := filepath.Join(configDir, appName)
+
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(appDir, dataFileName), nil
+}
+
+func loadTasks() ([]Task, error) {
+	dataPath, err := getDataPath()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(dataPath)
+	if os.IsNotExist(err) {
+		return []Task{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var tasks []Task
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		return nil, err
+	}
+
+	return tasks, nil
+}
+
+func saveTasks(tasks []Task) error {
+	dataPath, err := getDataPath()
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(tasks, "", " ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(dataPath, data, 0600)
+}
 
 type Task struct {
 	Title string
@@ -30,15 +89,23 @@ type model struct {
 }
 
 func NewModel() model {
+
+	tasks, err := loadTasks()
+	if err != nil {
+		fmt.Printf("Error loading tasks: %v\n", err)
+		tasks = []Task{}
+	}
+
 	ti := &textInput{
 		placeholder: "Enter task title",
 		focus:       true,
 	}
 
 	return model{
-		tasks:     []Task{},
+		tasks:     tasks,
 		input:     ti,
 		inputting: false,
+		cursor:    max(0, len(tasks)-1),
 	}
 }
 
@@ -97,6 +164,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if title != "" {
 					m.tasks = append(m.tasks, Task{Title: title})
 					m.cursor = len(m.tasks) - 1
+					if err := saveTasks(m.tasks); err != nil {
+						fmt.Printf("Error saving tasks: %v\n", err)
+					}
 				}
 				m.inputting = false
 				m.input.Reset()
@@ -117,6 +187,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
+			if err := saveTasks(m.tasks); err != nil {
+				fmt.Printf("Error saving tasks: %v\n", err)
+			}
 			return m, tea.Quit
 		case "n":
 			m.inputting = true
@@ -124,12 +197,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			if len(m.tasks) > 0 {
 				m.tasks[m.cursor].Done = !m.tasks[m.cursor].Done
+				if err := saveTasks(m.tasks); err != nil {
+					fmt.Printf("Error saving tasks: %v\n", err)
+				}
 			}
-		case "up":
+		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down":
+		case "down", "j":
 			if m.cursor < len(m.tasks)-1 {
 				m.cursor++
 			}
@@ -138,6 +214,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tasks = slices.Delete(m.tasks, m.cursor, m.cursor+1)
 				if m.cursor >= len(m.tasks) && len(m.tasks) > 0 {
 					m.cursor = len(m.tasks) - 1
+				}
+				if err := saveTasks(m.tasks); err != nil {
+					fmt.Printf("Error saving file: %v\n", err)
 				}
 			}
 		}
