@@ -13,8 +13,8 @@ A simple terminal-based to-do list application built with Go and [Bubble Tea](ht
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/todo-tui.git
-   cd todo-tui
+   git clone https://github.com/blaze-d83/boodo.git
+   cd boodo
    ```
 2. Fetch dependencies:
    ```bash
