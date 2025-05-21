@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -19,187 +20,112 @@ const (
 
 // Styles
 var (
-	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	doneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
+	headerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Padding(1, 2)
+	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	taskStyle     = lipgloss.NewStyle().Padding(0, 2)
+	doneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("230")).Padding(0, 1)
+	frameStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Margin(1)
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 )
 
-func getDataPath() (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-
-	appDir := filepath.Join(configDir, appName)
-
-	if err := os.MkdirAll(appDir, 0755); err != nil {
-		return "", err
-	}
-
-	return filepath.Join(appDir, dataFileName), nil
-}
-
-func loadTasks() ([]Task, error) {
-	dataPath, err := getDataPath()
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := os.ReadFile(dataPath)
-	if os.IsNotExist(err) {
-		return []Task{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var tasks []Task
-	if err := json.Unmarshal(data, &tasks); err != nil {
-		return nil, err
-	}
-
-	return tasks, nil
-}
-
-func saveTasks(tasks []Task) error {
-	dataPath, err := getDataPath()
-	if err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(tasks, "", " ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(dataPath, data, 0600)
-}
-
+// Task represents a single TODO.
 type Task struct {
-	Title string
-	Done  bool
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
 }
 
+// Model holds the state of the app.
 type model struct {
 	tasks     []Task
 	cursor    int
-	input     *textInput
 	inputting bool
-	lastKey   string
+	input     textinput.Model
+	err       error
 }
 
-func NewModel() model {
+func main() {
+	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Println("Error running program:", err)
+		os.Exit(1)
+	}
+}
 
+func initialModel() model {
 	tasks, err := loadTasks()
 	if err != nil {
 		fmt.Printf("Error loading tasks: %v\n", err)
 		tasks = []Task{}
 	}
 
-	ti := &textInput{
-		placeholder: "Enter task title",
-		focus:       true,
-	}
+	ti := textinput.New()
+	ti.Placeholder = "Add new task..."
+	ti.Focus()
+	ti.CharLimit = 100
+	ti.Width = 30
 
 	return model{
 		tasks:     tasks,
-		input:     ti,
+		cursor:    len(tasks) - 1,
 		inputting: false,
-		cursor:    max(0, len(tasks)-1),
+		input:     ti,
 	}
 }
-
-type textInput struct {
-	text        string
-	placeholder string
-	focus       bool
-}
-
-func (ti *textInput) Init() tea.Cmd { return nil }
-
-func (ti *textInput) View() string {
-	if ti.text == "" {
-		return fmt.Sprintf("[%s]", ti.placeholder)
-	}
-	return fmt.Sprintf("[%s]", ti.text)
-}
-
-func (ti *textInput) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
-			return ti, nil
-		case "esc":
-			ti.text = ""
-			return ti, nil
-		case "backspace":
-			if len(ti.text) > 0 {
-				ti.text = ti.text[:len(ti.text)-1]
-			}
-		default:
-			if len(msg.String()) == 1 {
-				ti.text += msg.String()
-			}
-		}
-	}
-	return ti, nil
-}
-
-func (ti *textInput) Reset() { ti.text = "" }
-
-func (ti *textInput) Value() string { return ti.text }
 
 func (m model) Init() tea.Cmd {
 	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	if m.inputting {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "enter":
-				title := strings.TrimSpace(m.input.Value())
-				if title != "" {
+				if title := m.input.Value(); title != "" {
 					m.tasks = append(m.tasks, Task{Title: title})
 					m.cursor = len(m.tasks) - 1
-					if err := saveTasks(m.tasks); err != nil {
-						fmt.Printf("Error saving tasks: %v\n", err)
-					}
+					m.err = saveTasks(m.tasks)
 				}
-				m.inputting = false
 				m.input.Reset()
-				return m, nil
+				m.input.Blur()
+				m.inputting = false
 			case "esc":
-				m.inputting = false
 				m.input.Reset()
-				return m, nil
+				m.input.Blur()
+				m.inputting = false
+				m.err = nil
 			}
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 		}
-
-		var cmd tea.Cmd
-		_, cmd = m.input.Update(msg)
-		return m, cmd
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if err := saveTasks(m.tasks); err != nil {
-				fmt.Printf("Error saving tasks: %v\n", err)
-			}
-			return m, tea.Quit
 		case "n":
 			m.inputting = true
-			return m, nil
+			m.input.Focus()
+			m.err = nil
 		case "d":
-			if len(m.tasks) > 0 {
+			if m.validCursor() {
 				m.tasks[m.cursor].Done = !m.tasks[m.cursor].Done
-				if err := saveTasks(m.tasks); err != nil {
-					fmt.Printf("Error saving tasks: %v\n", err)
+				m.err = saveTasks(m.tasks)
+			}
+		case "x":
+			if m.validCursor() {
+				m.tasks = slices.Delete(m.tasks, m.cursor, m.cursor+1)
+				if len(m.tasks) == 0 {
+					m.cursor = -1
+				} else if m.cursor >= len(m.tasks) {
+					m.cursor = len(m.tasks) - 1
 				}
+				m.err = saveTasks(m.tasks)
 			}
 		case "up", "k":
 			if m.cursor > 0 {
@@ -209,61 +135,114 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.tasks)-1 {
 				m.cursor++
 			}
-		case "x":
-			if len(m.tasks) > 0 {
-				m.tasks = slices.Delete(m.tasks, m.cursor, m.cursor+1)
-				if m.cursor >= len(m.tasks) && len(m.tasks) > 0 {
-					m.cursor = len(m.tasks) - 1
-				}
-				if err := saveTasks(m.tasks); err != nil {
-					fmt.Printf("Error saving file: %v\n", err)
-				}
+		case "q", "ctrl+c":
+			if err := saveTasks(m.tasks); err != nil {
+				m.err = err
+				return m, nil
 			}
+			return m, tea.Quit
 		}
 	}
+
 	return m, nil
 }
 
 func (m model) View() string {
-	if m.inputting {
-		return fmt.Sprintf(
-			"%s\n\n%s",
-			helpStyle.Render("Add new task:"),
-			m.input.View()+"\n\n"+helpStyle.Render("Enter to save . Esc to cancel"),
-		)
-	}
+	var header, body, inputView, footer strings.Builder
 
-	var b strings.Builder
-	b.WriteString("Your TODO List\n\n")
+	// Header
+	header.WriteString(headerStyle.Render("📋  BooDo — Your Tasks"))
 
+	// Body
 	for i, t := range m.tasks {
-		cursor := " "
+		line := fmt.Sprintf("%s %s", statusIcon(t.Done), t.Title)
 		if m.cursor == i {
-			cursor = cursorStyle.Render(">")
+			body.WriteString(selectedStyle.Render(line) + "\n")
+		} else {
+			body.WriteString(taskStyle.Render(line) + "\n")
 		}
-
-		status := " "
-		if t.Done {
-			status = doneStyle.Render("✔ ")
-		}
-
-		title := t.Title
-		if m.cursor == i {
-			title = lipgloss.NewStyle().Bold(true).Render(title)
-		}
-		b.WriteString(fmt.Sprintf("%s %s %s\n", cursor, status, title))
 	}
 
-	help := helpStyle.Render("\n[n] New  .  [d] Toggle  . [x] Delete  .  [Up/Down or k/j] Navigate  .  [q] Quit\n")
-	b.WriteString(help)
+	// Input
+	if m.inputting {
+		inputView.WriteString(lipgloss.JoinVertical(0,
+			helpStyle.Render("Type a new task and press Enter (esc to cancel):"),
+			m.input.View(),
+		))
+	}
 
-	return b.String()
+	// Footer
+	footer.WriteString(helpStyle.Render("[n] New  [d] Toggle  [x] Delete  [j/k] Navigate  [q] Quit"))
+
+	// Error message
+	var errorMsg string
+	if m.err != nil {
+		errorMsg = "\n" + errorStyle.Render("Error: "+m.err.Error())
+	}
+
+	// Compose view
+	screen := lipgloss.JoinVertical(0,
+		header.String(),
+		body.String(),
+		inputView.String(),
+		footer.String(),
+		errorMsg,
+	)
+
+	return frameStyle.Render(screen)
 }
 
-func main() {
-	p := tea.NewProgram(NewModel(), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Println("Error running program:", err)
-		os.Exit(1)
+func (m model) validCursor() bool {
+	return len(m.tasks) > 0 && m.cursor >= 0 && m.cursor < len(m.tasks)
+}
+
+func statusIcon(done bool) string {
+	if done {
+		return doneStyle.Render("✔")
 	}
+	return "○"
+}
+
+// Data persistence
+func getDataPath() (string, error) {
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	appDir := filepath.Join(cfg, appName)
+	if err := os.MkdirAll(appDir, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(appDir, dataFileName), nil
+}
+
+func loadTasks() ([]Task, error) {
+	path, err := getDataPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return []Task{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ts []Task
+	if err := json.Unmarshal(data, &ts); err != nil {
+		return nil, err
+	}
+	return ts, nil
+}
+
+func saveTasks(ts []Task) error {
+	path, err := getDataPath()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(ts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
 }
