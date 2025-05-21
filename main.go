@@ -24,15 +24,16 @@ type Task struct {
 type model struct {
 	tasks     []Task
 	cursor    int
-	input     tea.Model
+	input     *textInput
 	inputting bool
 	lastKey   string
 }
 
 func NewModel() model {
-	ti := &textInput{}
-	ti.placeholder = "Enter task title"
-	ti.focus = true
+	ti := &textInput{
+		placeholder: "Enter task title",
+		focus:       true,
+	}
 
 	return model{
 		tasks:     []Task{},
@@ -47,16 +48,16 @@ type textInput struct {
 	focus       bool
 }
 
-func (ti textInput) Init() tea.Cmd { return nil }
+func (ti *textInput) Init() tea.Cmd { return nil }
 
-func (ti textInput) View() string {
+func (ti *textInput) View() string {
 	if ti.text == "" {
 		return fmt.Sprintf("[%s]", ti.placeholder)
 	}
 	return fmt.Sprintf("[%s]", ti.text)
 }
 
-func (ti textInput) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (ti *textInput) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -92,23 +93,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "enter":
-				title := strings.TrimSpace(m.input.(*textInput).Value())
+				title := strings.TrimSpace(m.input.Value())
 				if title != "" {
 					m.tasks = append(m.tasks, Task{Title: title})
 					m.cursor = len(m.tasks) - 1
 				}
 				m.inputting = false
-				m.input.(*textInput).Reset()
+				m.input.Reset()
 				return m, nil
 			case "esc":
 				m.inputting = false
-				m.input.(*textInput).Reset()
+				m.input.Reset()
 				return m, nil
 			}
 		}
 
 		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
+		_, cmd = m.input.Update(msg)
 		return m, cmd
 	}
 
