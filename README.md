@@ -2,6 +2,9 @@
 
 A simple terminal-based to-do list application built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
+![Demo](https://github.com/user-attachments/assets/5706de88-950e-4fea-97df-563501af6848)
+
+
 ## Features
 
 - Navigate tasks with ↑ and ↓
